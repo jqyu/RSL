@@ -17,18 +17,16 @@ import Data.Maybe ( Maybe(..) )
 import Data.StrMap ( StrMap(..) )
 import Data.StrMap as StrMap
 
-import           Unsafe.Coerce ( unsafeCoerce )
+import Unsafe.Coerce ( unsafeCoerce )
 
 import RSL.Core.Types
-  ( BlockedFetch(..)
-  , DataSource
-  , Request
+  ( BlockedFetch
+  , class DataSource
+  , class Request
   )
 
 import RSL.Utils
-  ( Typeable
-  , typeName
-  )
+  ( typeName )
 
 
 type BlockedFetches r = List (forall a. BlockedFetch r a)

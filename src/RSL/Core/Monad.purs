@@ -13,8 +13,10 @@ import Control.Monad.Eff.Exception
 import Control.Monad.Eff.Ref
 import Control.Monad.Except
 
+import Data.Either
 import Data.Exists
 import Data.List
+import Data.Maybe ( Maybe(..) )
 
 import RSL.Core.Types
   ( Flags(..)
@@ -23,7 +25,14 @@ import RSL.Core.Types
   , Stats(..)
   , emptyStats
 
+  , class Request
+  , class DataSource
+
   , ResultVar(..)
+  , ResultVal(..)
+  , newEmptyResult
+  , readResult
+  , BlockedFetch(..)
   )
 
 import RSL.Core.DataCache ( DataCache(..) )
@@ -63,13 +72,13 @@ newtype RSL a
   = RSL forall eff.
     ( Env
       -> Ref RequestStore
-      -> Aff ( ref :: REF | eff ) (Result a)
+      -> Aff ( console :: CONSOLE, ref :: REF | eff ) (Result a)
     )
 
 unRSL :: forall a eff. RSL a
       -> Env
       -> Ref RequestStore
-      -> Aff ( ref :: REF | eff ) (Result a)
+      -> Aff ( console :: CONSOLE, ref :: REF | eff ) (Result a)
          
 unRSL (RSL m) = m
 
@@ -186,13 +195,12 @@ throwRSL e = RSL \env ref -> return (Throw e)
 --------------------------------------------
 -- | RSL Computation Executor
 
-runRSL :: forall a eff.
-          Env
-       -> RSL a
+runRSL :: forall a eff. Env -> RSL a
        -> Aff ( err :: EXCEPTION, console :: CONSOLE, ref :: REF | eff ) a
 runRSL env h = do
   -- | Computes a layer of execution with mutation
-  let go :: Int -> Env -> Cont a -> Aff ( err :: EXCEPTION, console :: CONSOLE, ref :: REF | eff ) a
+  let go :: Int -> Env -> Cont a
+         -> Aff ( err :: EXCEPTION, console :: CONSOLE, ref :: REF | eff ) a
       go n env' c = do
         log "START computation"
         -- create an empty request store for current layer of computation
@@ -220,10 +228,63 @@ runRSL env h = do
 -- | Data fetching and caching
 
 -- | Possible responses when checking the cache
+data CacheResult a
+  = Uncached (ResultVar a)         -- request yet unseen
+  | CachedNotFetched (ResultVar a) -- seen and waiting
+  | Cached (Either Error a)        -- seen, and waiting
 
-dataFetch :: forall r a. r a -> RSL a
+cached :: forall r a eff. (Request r a) => Env -> r a
+       -> Aff ( console:: CONSOLE, ref :: REF | eff ) (CacheResult a)
+cached env req = do
+  cache <- liftEff $ readRef env.cacheRef
+  let do_fetch :: Aff ( console :: CONSOLE, ref :: REF | eff ) (CacheResult a)
+      do_fetch = do
+        log $ "Fetching: " ++ show req
+        rvar <- liftEff $ newEmptyResult
+        liftEff $ writeRef env.cacheRef $ DataCache.insert req rvar cache
+        return (Uncached rvar)
+  case DataCache.lookup req cache of
+       Nothing   -> do_fetch
+       Just rvar -> do
+         mb <- liftEff $ readResult rvar
+         case mb of
+              ResultBlocked -> do
+                log $ "Cached, not fetched yet: " ++ show req
+                return (CachedNotFetched rvar)
+              ResultThrow e -> do
+                log $ "Cached error: " ++ show req
+                return (Cached (Left e))
+              ResultDone a -> do
+                log $ "Cached result: " ++ show req
+                return (Cached (Right a))
+
+dataFetch :: forall r a. (DataSource r, Request r a)
+          => r a -> RSL a
 dataFetch req = RSL \env ref -> do
-  return $ Throw (error "yes")
+  res <- cached env req
+  case res of
+       -- Uncached, add request to store and return blocked value
+       Uncached rvar -> do
+         liftEff $ modifyRef ref $ RequestStore.add (BlockedFetch req rvar)
+         return $ Blocked (Cont (continueFetch req rvar))
+       -- Cached but not fetched, return blocked value
+       CachedNotFetched rvar ->
+         return $ Blocked (Cont (continueFetch req rvar))
+       -- Evalulated error, throw it
+       Cached (Left ex) -> return $ Throw ex
+       -- Evaluated result, return it unblocked
+       Cached (Right a) -> return $ Done a
+
+continueFetch :: forall a r. (DataSource r, Request r a)
+              => r a
+              -> ResultVar a
+              -> RSL a
+continueFetch req rvar = RSL \env ref -> do
+  m <- liftEff $ readResult rvar
+  return $ case m of
+       ResultDone a -> Done a
+       ResultThrow e -> Throw e
+       ResultBlocked -> Throw (error "woops, not fetched")
 
 performFetches :: forall eff.
                   Int

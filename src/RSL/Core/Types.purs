@@ -7,12 +7,16 @@ module RSL.Core.Types
   , RoundStats(..)
   , emptyStats
 
-  , Request
-  , DataSource
+  , class Request
+  , class DataSource
   , PerformFetch(..)
   , fetch
 
   , ResultVar(..)
+  , ResultVal(..)
+  , newResult
+  , newEmptyResult
+  , readResult
   , BlockedFetch(..)
 
   ) where
@@ -20,7 +24,8 @@ module RSL.Core.Types
 import Prelude
 
 import Control.Monad.Aff
-import Control.Monad.Aff.AVar
+import Control.Monad.Eff
+import Control.Monad.Eff.Ref
 import Control.Monad.Eff.Exception
   ( Error(..)
   )
@@ -29,7 +34,8 @@ import Data.Either ( Either(..) )
 import Data.List ( List(..) )
 
 import RSL.Utils
-  ( Typeable
+  ( class Hashable
+  , class Typeable
   , typeName
   )
 
@@ -79,11 +85,27 @@ class DataSource req where
 
 class ( Show (req a)
       , Typeable (req a)
+      , Hashable (req a)
       ) <= Request req a
 
-newtype ResultVar a = ResultVar (AVar (Either Error a))
+data ResultVal a
+  = ResultDone a
+  | ResultThrow Error
+  | ResultBlocked
 
+newtype ResultVar a = ResultVar (Ref (ResultVal a))
+
+newResult :: forall a e. a -> Eff ( ref :: REF | e ) (ResultVar a)
+newResult x = ResultVar <$> newRef (ResultDone x)
+
+newEmptyResult :: forall a e. Eff ( ref :: REF | e ) (ResultVar a)
+newEmptyResult = ResultVar <$> newRef ResultBlocked
+
+readResult :: forall a e. ResultVar a -> Eff ( ref :: REF | e ) (ResultVal a)
+readResult (ResultVar a) = readRef a
+
+-- really wish the magic of deriving was here
 data BlockedFetch r a = BlockedFetch (r a) (ResultVar a)
-
-instance typeOfBlockedFetch :: (Request r a) => Typeable (BlockedFetch r a) where
+instance typeOfBlockedFetch :: (Request r a)
+                            => Typeable (BlockedFetch r a) where
   typeName (BlockedFetch req _) = typeName req
