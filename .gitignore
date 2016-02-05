@@ -4,3 +4,8 @@
 /output/
 /.psci*
 /src/.webpack.js
+
+# misc
+*.log
+*.swp
+*.swo
