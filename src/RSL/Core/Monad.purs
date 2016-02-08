@@ -4,6 +4,7 @@ module RSL.Core.Monad where
 import Prelude
 
 import Control.Bind
+import Control.MonadPlus
 import Control.Monad.Aff
 import Control.Monad.Aff.Console
 import Control.Monad.Eff
@@ -15,18 +16,22 @@ import Control.Monad.Except
 
 import Data.Either
 import Data.Exists
+import Data.Foldable ( foldr )
 import Data.List
 import Data.Maybe ( Maybe(..) )
+import Data.Traversable
 
 import RSL.Core.Types
-  ( Flags(..)
+  ( Flags
   , defaultFlags
 
   , Stats(..)
   , emptyStats
 
+  , PerformFetch(..)
   , class Request
   , class DataSource
+  , fetch
 
   , ResultVar(..)
   , ResultVal(..)
@@ -233,6 +238,7 @@ data CacheResult a
   | CachedNotFetched (ResultVar a) -- seen and waiting
   | Cached (Either Error a)        -- seen, and waiting
 
+-- checks environment cache for current request
 cached :: forall r a eff. (Request r a) => Env -> r a
        -> Aff ( console:: CONSOLE, ref :: REF | eff ) (CacheResult a)
 cached env req = do
@@ -258,8 +264,8 @@ cached env req = do
                 log $ "Cached result: " ++ show req
                 return (Cached (Right a))
 
-dataFetch :: forall r a. (DataSource r, Request r a)
-          => r a -> RSL a
+-- Creates an RSL monad reflecting a data request
+dataFetch :: forall r a. (DataSource r, Request r a) => r a -> RSL a
 dataFetch req = RSL \env ref -> do
   res <- cached env req
   case res of
@@ -275,6 +281,15 @@ dataFetch req = RSL \env ref -> do
        -- Evaluated result, return it unblocked
        Cached (Right a) -> return $ Done a
 
+-- Bypasses the caching method to queue a request
+-- This is mostly used for writes, so you don't cache a repeated query
+uncachedRequest :: forall r a. (DataSource r, Request r a) => r a -> RSL a
+uncachedRequest req = RSL \env ref -> do
+  rvar <- liftEff $ newEmptyResult
+  liftEff $ modifyRef ref $ RequestStore.add (BlockedFetch req rvar)
+  return $ Blocked (Cont (continueFetch req rvar))
+
+-- Creates a continuation reflecting a blocked value to be retrieved in current fetch
 continueFetch :: forall a r. (DataSource r, Request r a)
               => r a
               -> ResultVar a
@@ -295,6 +310,10 @@ performFetches n env reqs = do
   let f = env.flags
       jobs = RequestStore.contents reqs
       n' = n + length jobs
+  log "Will collect stats here later"
+  -- TODO: refer to haxl for examples of timer code
+  log "START fetches"
+  let fetches = map (fetch f) jobs
+  log "DONE fetches"
   return n'
-
 

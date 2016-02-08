@@ -78,7 +78,7 @@ data RoundStats = RoundStats
 
 data PerformFetch
   = SyncFetch (forall e. Aff e Unit)
-  | AsyncFetch (forall e. Aff e Unit)
+  | AsyncFetch ((forall e. Aff e Unit) -> (forall e. Aff e Unit))
 
 class DataSource req where
   fetch :: Flags -> List forall a. (BlockedFetch req a) -> PerformFetch
