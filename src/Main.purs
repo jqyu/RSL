@@ -10,7 +10,7 @@ import Control.Monad.Eff.Exception
 import Control.Monad.Eff.Ref
 
 import RSL.Core
-import Services.Radredis
+import Services.Echo
 
 n1 :: RSL Int
 n1 = dataFetch (Echo 1 "foo")
