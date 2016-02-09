@@ -6,6 +6,7 @@ import Prelude
 import Control.Monad.Aff
 import Control.Monad.Eff.Console ( CONSOLE )
 import Control.Monad.Eff.Exception ( Error )
+import Control.Monad.Eff.Ref ( REF )
 
 import Data.Exists ( Exists, mkExists, runExists )
 import Data.List ( List(..) )
@@ -38,10 +39,8 @@ newtype BlockedFetch r a = BlockedFetch
   }
 
 data PerformFetch
-  = SyncFetch  (   forall e. Aff ( console :: CONSOLE | e ) Unit  )
-  | AsyncFetch (  (forall e. Aff ( console :: CONSOLE | e ) Unit)
-               -> (forall e. Aff ( console :: CONSOLE | e ) Unit)
-               )
+  = SyncFetch  (  forall e. Aff ( ref :: REF, console :: CONSOLE | e ) Unit )
+  | AsyncFetch (  forall e. Aff ( ref :: REF, console :: CONSOLE | e ) Unit )
 
 type Dispatch r = Flags -> BlockedFetches r -> PerformFetch
 

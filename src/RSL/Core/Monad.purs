@@ -1,25 +1,42 @@
 module RSL.Core.Monad where
 
--- TODO: explicit imports
 import Prelude
+  ( class Applicative
+  , return
+  , class Apply
+  , class Bind
+  , bind
+  , class Functor
+  , class Show
+  , show
 
-import Control.Bind
-import Control.MonadPlus
-import Control.Monad.Aff
-import Control.Monad.Aff.Console
-import Control.Monad.Eff
+  , Unit
+  , unit
+
+  , ($)
+  , (+)
+  , (++)
+  , (<$>)
+  , (<*>)
+  , (>>=)
+  , (<<<)
+  )
+
+import Control.Bind ( (>=>) )
+import Control.Monad.Aff ( Aff )
+import Control.Monad.Aff.Console ( log )
+import Control.Monad.Eff ( Eff )
 import Control.Monad.Eff.Class ( liftEff )
 import Control.Monad.Eff.Console ( CONSOLE )
-import Control.Monad.Eff.Exception
-import Control.Monad.Eff.Ref
-import Control.Monad.Except
+import Control.Monad.Eff.Exception ( EXCEPTION, Error, error )
+import Control.Monad.Eff.Ref ( REF, Ref, newRef, readRef, modifyRef, writeRef )
+import Control.Monad.Except ( throwError )
 
-import Data.Either
-import Data.Exists
-import Data.Foldable ( foldr )
-import Data.List
+import Data.Either ( Either(..) )
+import Data.Exists ( Exists, mkExists, runExists )
+import Data.List ( List(..), length )
 import Data.Maybe ( Maybe(..) )
-import Data.Traversable
+import Data.Traversable ( sequence )
 
 import RSL.Core.Types
   ( Flags
@@ -30,19 +47,27 @@ import RSL.Core.Types
 
   )
 
-import RSL.Core.DataCache ( DataCache(..) )
+import RSL.Core.DataCache ( DataCache )
 import RSL.Core.DataCache as DataCache
 
 import RSL.Core.Fetcher
   ( BlockedFetch(..)
-  , Fetcher(..)
   , class Request
+  , PerformFetch(..)
   )
 
-import RSL.Core.RequestStore ( RequestStore(..) )
-import RSL.Core.RequestStore as RequestStore
+import RSL.Core.RequestStore ( RequestStore )
+import RSL.Core.RequestStore
+  ( empty
+  , add
+  , apply
+  ) as RequestStore
 
-import RSL.Core.ResultVar ( ResultVar(..), ResultVal(..), newEmptyResult, readResult )
+import RSL.Core.ResultVar ( ResultVar, ResultVal(..) )
+import RSL.Core.ResultVar
+  ( empty
+  , read
+  ) as ResultVar
 
 
 --------------------------------------------
@@ -200,11 +225,11 @@ throwRSL e = RSL \env ref -> return (Throw e)
 -- | RSL Computation Executor
 
 runRSL :: forall a eff. Env -> RSL a
-       -> Aff ( err :: EXCEPTION, console :: CONSOLE, ref :: REF | eff ) a
+       -> Aff ( console :: CONSOLE, ref :: REF | eff ) a
 runRSL env h = do
   -- | Computes a layer of execution with mutation
   let go :: Int -> Env -> Cont a
-         -> Aff ( err :: EXCEPTION, console :: CONSOLE, ref :: REF | eff ) a
+         -> Aff ( console :: CONSOLE, ref :: REF | eff ) a
       go n env' c = do
         log "START computation"
         -- create an empty request store for current layer of computation
@@ -245,13 +270,13 @@ cached env req = do
   let do_fetch :: Aff ( console :: CONSOLE, ref :: REF | eff ) (CacheResult a)
       do_fetch = do
         log $ "Fetching: " ++ show req
-        rvar <- liftEff $ newEmptyResult
+        rvar <- liftEff ResultVar.empty
         liftEff $ writeRef env.cacheRef $ DataCache.insert req rvar cache
         return (Uncached rvar)
   case DataCache.lookup req cache of
        Nothing   -> do_fetch
        Just rvar -> do
-         mb <- liftEff $ readResult rvar
+         mb <- liftEff $ ResultVar.read rvar
          case mb of
               ResultBlocked -> do
                 log $ "Cached, not fetched yet: " ++ show req
@@ -285,18 +310,16 @@ dataFetch req = RSL \env ref -> do
 -- This is mostly used for writes, so you don't cache a repeated query
 uncachedRequest :: forall r a. (Request r a) => r a -> RSL a
 uncachedRequest req = RSL \env ref -> do
-  rvar <- liftEff $ newEmptyResult
+  rvar <- liftEff ResultVar.empty
   liftEff $ modifyRef ref $ RequestStore.add
     (BlockedFetch { req: req, rvar: rvar })
   return $ Blocked (Cont (continueFetch req rvar))
 
 -- Creates a continuation reflecting a blocked value to be retrieved in current fetch
 continueFetch :: forall a r. (Request r a)
-              => r a
-              -> ResultVar a
-              -> RSL a
+              => r a -> ResultVar a -> RSL a
 continueFetch req rvar = RSL \env ref -> do
-  m <- liftEff $ readResult rvar
+  m <- liftEff $ ResultVar.read rvar
   return $ case m of
        ResultDone a -> Done a
        ResultThrow e -> Throw e
@@ -312,7 +335,33 @@ performFetches n env reqs = do
       fetches = RequestStore.apply f reqs
       n' = n + length fetches
   log "Will collect stats here later"
-  log "START fetches"
-  log "DONE fetches"
+  log $ "START fetches #" ++ show n'
+  executeFetches fetches
+  log $ "DONE fetches #" ++ show n'
   return n'
 
+executeFetches :: forall eff.
+                  List PerformFetch
+               -> Aff ( ref :: REF, console :: CONSOLE | eff ) Unit
+
+executeFetches fe = do
+    -- TODO: fork/par this properly
+    sequence asyncFetches
+    sequence syncFetches
+    return unit
+
+  where asyncFetches :: forall eff'.
+                        List ( Aff ( ref :: REF, console :: CONSOLE | eff' ) Unit )
+        asyncFetches = do
+          fetch <- fe
+          case fetch of
+               AsyncFetch a -> return a
+               _            -> Nil
+
+        syncFetches :: forall eff'.
+                       List ( Aff ( ref :: REF, console :: CONSOLE | eff' ) Unit )
+        syncFetches = do
+          fetch <- fe
+          case fetch of
+               SyncFetch a -> return a
+               _           -> Nil

@@ -61,9 +61,6 @@ add bf (RequestStore m) = RequestStore $
         insert Nothing = Fetcher.fromBF bf
         insert (Just rq) = runExistsK insertInto rq
 
-contents :: RequestStore -> List (ExistsK Fetcher)
-contents (RequestStore m) = StrMap.values m
-
 apply :: Flags -> RequestStore -> List PerformFetch
 apply f (RequestStore m) = map apply' $ StrMap.values m
   where dispatch' :: forall r. Fetcher r -> PerformFetch
