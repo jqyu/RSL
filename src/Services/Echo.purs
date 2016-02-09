@@ -42,16 +42,16 @@ dispatch _ reqs = RSL.AsyncFetch do
         fetches :: forall e. List ( Aff ( console :: CONSOLE, ref :: REF | e ) Unit )
         fetches = map (runExists fetch) reqs
 
-instance showRadredisRequest :: Show (EchoRequest a) where
+instance showEchoRequest :: Show (EchoRequest a) where
   show (Echo _ s) = s
   show (DoubleEcho _ s) = s ++ s
   show (HelloWorld _) = "hello world"
 
-instance hashRadredisRequest :: Hashable (EchoRequest a) where
-  hash (Echo _ s)       = "radredis:echo:" ++ s
-  hash (DoubleEcho _ s) = "radredis:decho:" ++ s
-  hash (HelloWorld _)   = "radredis:hw:"
+instance hashEchoRequest :: Hashable (EchoRequest a) where
+  hash (Echo _ s)       = "echo:echo:" ++ s
+  hash (DoubleEcho _ s) = "echo:decho:" ++ s
+  hash (HelloWorld _)   = "echo:hw"
 
-instance requestRadredis :: RSL.Request EchoRequest a where
+instance requestEcho :: RSL.Request EchoRequest a where
   fetcher r = RSL.new (RSL.key r) dispatch
-  key _     = "radredis"
+  key _     = "echo"
