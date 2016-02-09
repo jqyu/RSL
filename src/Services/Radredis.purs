@@ -17,6 +17,8 @@ import Data.Traversable
 
 data RadredisRequest a
   = Echo a String
+  | DoubleEcho a String
+  | HelloWorld a
 
 dispatch :: RSL.Flags
          -> List (Exists (RSL.BlockedFetch RadredisRequest))
@@ -24,18 +26,31 @@ dispatch :: RSL.Flags
 dispatch _ reqs = RSL.AsyncFetch do
     sequence fetches
     return unit
+
   where fetch :: forall a e. RSL.BlockedFetch RadredisRequest a -> Aff ( console :: CONSOLE, ref :: REF | e ) Unit
         fetch (RSL.BlockedFetch { req: (Echo a s), rvar: rvar }) = do
           liftEff $ RSL.putSuccess rvar a
           log s
+        fetch (RSL.BlockedFetch { req: (DoubleEcho a s), rvar: rvar }) = do
+          liftEff $ RSL.putSuccess rvar a
+          log $ s ++ s
+        fetch (RSL.BlockedFetch { req: (HelloWorld a), rvar: rvar }) = do
+          liftEff $ RSL.putSuccess rvar a
+          log $ "Hello World"
+
+
         fetches :: forall e. List ( Aff ( console :: CONSOLE, ref :: REF | e ) Unit )
         fetches = map (runExists fetch) reqs
 
 instance showRadredisRequest :: Show (RadredisRequest a) where
   show (Echo _ s) = s
+  show (DoubleEcho _ s) = s ++ s
+  show (HelloWorld _) = "hello world"
 
 instance hashRadredisRequest :: Hashable (RadredisRequest a) where
-  hash (Echo _ s) = "radredis:echo:" ++ s
+  hash (Echo _ s)       = "radredis:echo:" ++ s
+  hash (DoubleEcho _ s) = "radredis:decho:" ++ s
+  hash (HelloWorld _)   = "radredis:hw:"
 
 instance requestRadredis :: RSL.Request RadredisRequest a where
   fetcher r = RSL.new (RSL.key r) dispatch

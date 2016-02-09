@@ -16,10 +16,10 @@ n1 :: RSL Int
 n1 = dataFetch (Echo 1 "foo")
 
 n2 :: RSL Int
-n2 = dataFetch (Echo 2 "bar")
+n2 = dataFetch (DoubleEcho 2 "bar")
 
 n3 :: RSL Int
-n3 = dataFetch (Echo 3 "baz")
+n3 = dataFetch (HelloWorld 3)
 
 n4 :: RSL Int
 n4 = uncachedRequest (Echo 3 "qux")
@@ -40,9 +40,7 @@ sum = do
 test :: forall e. Aff ( console :: CONSOLE, ref :: REF | e ) Unit
 test = do
   env <- liftEff emptyEnv
-
   val <- runRSL env sum
-
   Aff.log "Result is:"
   Aff.log $ show val
 
