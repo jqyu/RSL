@@ -25,6 +25,7 @@ import Prelude
 
 import Control.Monad.Aff
 import Control.Monad.Eff
+import Control.Monad.Eff.Console ( CONSOLE )
 import Control.Monad.Eff.Ref
 import Control.Monad.Eff.Exception
   ( Error(..)
@@ -77,15 +78,18 @@ data RoundStats = RoundStats
 -- | Data Source Classes
 
 data PerformFetch
-  = SyncFetch (forall e. Aff e Unit)
-  | AsyncFetch ((forall e. Aff e Unit) -> (forall e. Aff e Unit))
+  = SyncFetch (forall e. Aff ( console :: CONSOLE | e ) Unit)
+  | AsyncFetch (  (forall e. Aff ( console :: CONSOLE | e ) Unit)
+               -> (forall e. Aff ( console :: CONSOLE | e ) Unit)
+               )
 
 class DataSource req where
-  fetch :: Flags -> List forall a. (BlockedFetch req a) -> PerformFetch
+  fetch :: Flags -> List (forall a. (BlockedFetch req a)) -> PerformFetch
 
 class ( Show (req a)
       , Typeable (req a)
       , Hashable (req a)
+      , DataSource req
       ) <= Request req a
 
 data ResultVal a

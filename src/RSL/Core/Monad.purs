@@ -43,7 +43,7 @@ import RSL.Core.Types
 import RSL.Core.DataCache ( DataCache(..) )
 import RSL.Core.DataCache as DataCache
 
-import RSL.Core.RequestStore ( RequestStore(..) )
+import RSL.Core.RequestStore ( BlockedFetches(..), RequestStore(..) )
 import RSL.Core.RequestStore as RequestStore
 
 --------------------------------------------
@@ -305,15 +305,18 @@ performFetches :: forall eff.
                   Int
                -> Env
                -> RequestStore
-               -> Aff ( ref :: REF | eff ) Int
+               -> Aff ( ref :: REF, console :: CONSOLE | eff ) Int
 performFetches n env reqs = do
   let f = env.flags
       jobs = RequestStore.contents reqs
       n' = n + length jobs
   log "Will collect stats here later"
-  -- TODO: refer to haxl for examples of timer code
   log "START fetches"
-  let fetches = map (fetch f) jobs
+  let applyFetch' :: forall r. (DataSource r) => List (forall a. BlockedFetch r a) -> PerformFetch
+      applyFetch' bfs = fetch f bfs
+      applyFetch :: BlockedFetches -> PerformFetch
+      applyFetch (BlockedFetches bfs) = applyFetch' bfs
+      fetches = map applyFetch jobs
   log "DONE fetches"
   return n'
 

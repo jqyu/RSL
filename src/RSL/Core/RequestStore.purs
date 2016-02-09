@@ -1,6 +1,6 @@
 module RSL.Core.RequestStore
-  ( RequestStore(..)
-  , BlockedFetches(..)
+  ( BlockedFetches(..)
+  , RequestStore(..)
 
   , empty
   , add
@@ -28,23 +28,32 @@ import RSL.Core.Types
 import RSL.Utils
   ( typeName )
 
-
-type BlockedFetches r = List (forall a. BlockedFetch r a)
-
-newtype RequestStore = RequestStore (StrMap forall r. (BlockedFetches r))
+data BlockedFetches =
+  BlockedFetches
+    (  forall r. (DataSource r)
+    => List (forall a. BlockedFetch r a)
+    )
+newtype RequestStore = RequestStore (StrMap BlockedFetches)
 
 empty :: RequestStore
-empty = RequestStore $ StrMap.empty
+empty = RequestStore StrMap.empty
 
 add :: forall r a. (DataSource r, Request r a)
     => BlockedFetch r a
     -> RequestStore
     -> RequestStore
 add bf (RequestStore m) =
-  RequestStore $ StrMap.alter (unsafeCoerce insertInto) (typeName bf) m
-  where insertInto :: Maybe (BlockedFetches r) -> Maybe (BlockedFetches r)
-        insertInto Nothing    = return $ unsafeCoerce $ List.singleton bf
-        insertInto (Just bfs) = return $ (unsafeCoerce bf : bfs)
+  RequestStore $ StrMap.alter insertInto (typeName bf) m
+  where insertInto' :: forall r'. BlockedFetch r a
+                    -> List (forall a'. BlockedFetch r' a')
+                    -> List (forall a'. BlockedFetch r' a')
+        insertInto' bf bfs = unsafeCoerce (bf : unsafeCoerce bfs)
 
-contents :: RequestStore -> List forall r. BlockedFetches r
+        insertInto :: Maybe BlockedFetches -> Maybe BlockedFetches
+        insertInto Nothing =
+          return $ BlockedFetches (insertInto' bf Nil)
+        insertInto (Just (BlockedFetches bfs)) =
+          return $ BlockedFetches (insertInto' bf bfs)
+
+contents :: RequestStore -> List BlockedFetches
 contents (RequestStore m) = StrMap.values m
