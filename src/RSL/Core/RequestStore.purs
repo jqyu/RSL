@@ -1,11 +1,11 @@
 module RSL.Core.RequestStore
-  ( BlockedFetches(..)
-  , RequestStore(..)
+  ( RequestStore(..)
 
   , empty
   , add
-  , contents
+  , apply
   ) where
+
 
 import Prelude
 
@@ -14,46 +14,59 @@ import Data.List as List
 
 import Data.Maybe ( Maybe(..) )
 
-import Data.StrMap ( StrMap(..) )
+import Data.StrMap ( StrMap )
 import Data.StrMap as StrMap
 
 import Unsafe.Coerce ( unsafeCoerce )
 
-import RSL.Core.Types
-  ( BlockedFetch
-  , class DataSource
+import RSL.Core.Fetcher
+  ( BlockedFetch(..)
+  , Fetcher(..)
   , class Request
+  , PerformFetch
+  )
+import RSL.Core.Fetcher
+  ( new
+  , insert
+  , bfKey
+  , fromBF
+  ) as Fetcher
+
+import RSL.Core.Types ( Flags )
+import RSL.Utils
+  ( ExistsK
+  , mkExistsK
+  , runExistsK
   )
 
-import RSL.Utils
-  ( typeName )
-
-data BlockedFetches =
-  BlockedFetches
-    (  forall r. (DataSource r)
-    => List (forall a. BlockedFetch r a)
-    )
-newtype RequestStore = RequestStore (StrMap BlockedFetches)
+newtype RequestStore = RequestStore (StrMap (ExistsK Fetcher))
 
 empty :: RequestStore
 empty = RequestStore StrMap.empty
 
-add :: forall r a. (DataSource r, Request r a)
+add :: forall r a. (Request r a)
     => BlockedFetch r a
     -> RequestStore
     -> RequestStore
-add bf (RequestStore m) =
-  RequestStore $ StrMap.alter insertInto (typeName bf) m
-  where insertInto' :: forall r'. BlockedFetch r a
-                    -> List (forall a'. BlockedFetch r' a')
-                    -> List (forall a'. BlockedFetch r' a')
-        insertInto' bf bfs = unsafeCoerce (bf : unsafeCoerce bfs)
+add bf (RequestStore m) = RequestStore $
+  StrMap.alter (Just <<< mkExistsK <<< insert) key m
 
-        insertInto :: Maybe BlockedFetches -> Maybe BlockedFetches
-        insertInto Nothing =
-          return $ BlockedFetches (insertInto' bf Nil)
-        insertInto (Just (BlockedFetches bfs)) =
-          return $ BlockedFetches (insertInto' bf bfs)
+  where key :: String
+        key = Fetcher.bfKey bf
 
-contents :: RequestStore -> List BlockedFetches
+        insertInto :: forall b. Fetcher b -> Fetcher r
+        insertInto fe = Fetcher.insert bf $ unsafeCoerce fe
+
+        insert :: Maybe (ExistsK Fetcher) -> Fetcher r
+        insert Nothing = Fetcher.fromBF bf
+        insert (Just rq) = runExistsK insertInto rq
+
+contents :: RequestStore -> List (ExistsK Fetcher)
 contents (RequestStore m) = StrMap.values m
+
+apply :: Flags -> RequestStore -> List PerformFetch
+apply f (RequestStore m) = map apply' $ StrMap.values m
+  where dispatch' :: forall r. Fetcher r -> PerformFetch
+        dispatch' (Fetcher { dispatch: d, queue: q }) = d f q
+        apply'    :: ExistsK Fetcher -> PerformFetch
+        apply' fe = runExistsK dispatch' fe

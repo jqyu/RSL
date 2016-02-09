@@ -7,18 +7,6 @@ module RSL.Core.Types
   , RoundStats(..)
   , emptyStats
 
-  , class Request
-  , class DataSource
-  , PerformFetch(..)
-  , fetch
-
-  , ResultVar(..)
-  , ResultVal(..)
-  , newResult
-  , newEmptyResult
-  , readResult
-  , BlockedFetch(..)
-
   ) where
 
 import Prelude
@@ -32,7 +20,7 @@ import Control.Monad.Eff.Exception
   )
 
 import Data.Either ( Either(..) )
-import Data.List ( List(..) )
+import Data.List ( List(..), (:) )
 
 import RSL.Utils
   ( class Hashable
@@ -72,44 +60,3 @@ data RoundStats = RoundStats
   { roundTime :: Microseconds
   -- add more fields as you need them
   }
-
-
---------------------------------
--- | Data Source Classes
-
-data PerformFetch
-  = SyncFetch (forall e. Aff ( console :: CONSOLE | e ) Unit)
-  | AsyncFetch (  (forall e. Aff ( console :: CONSOLE | e ) Unit)
-               -> (forall e. Aff ( console :: CONSOLE | e ) Unit)
-               )
-
-class DataSource req where
-  fetch :: Flags -> List (forall a. (BlockedFetch req a)) -> PerformFetch
-
-class ( Show (req a)
-      , Typeable (req a)
-      , Hashable (req a)
-      , DataSource req
-      ) <= Request req a
-
-data ResultVal a
-  = ResultDone a
-  | ResultThrow Error
-  | ResultBlocked
-
-newtype ResultVar a = ResultVar (Ref (ResultVal a))
-
-newResult :: forall a e. a -> Eff ( ref :: REF | e ) (ResultVar a)
-newResult x = ResultVar <$> newRef (ResultDone x)
-
-newEmptyResult :: forall a e. Eff ( ref :: REF | e ) (ResultVar a)
-newEmptyResult = ResultVar <$> newRef ResultBlocked
-
-readResult :: forall a e. ResultVar a -> Eff ( ref :: REF | e ) (ResultVal a)
-readResult (ResultVar a) = readRef a
-
--- really wish the magic of deriving was here
-data BlockedFetch r a = BlockedFetch (r a) (ResultVar a)
-instance typeOfBlockedFetch :: (Request r a)
-                            => Typeable (BlockedFetch r a) where
-  typeName (BlockedFetch req _) = typeName req

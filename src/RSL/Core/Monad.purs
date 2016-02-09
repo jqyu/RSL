@@ -28,23 +28,22 @@ import RSL.Core.Types
   , Stats(..)
   , emptyStats
 
-  , PerformFetch(..)
-  , class Request
-  , class DataSource
-  , fetch
-
-  , ResultVar(..)
-  , ResultVal(..)
-  , newEmptyResult
-  , readResult
-  , BlockedFetch(..)
   )
 
 import RSL.Core.DataCache ( DataCache(..) )
 import RSL.Core.DataCache as DataCache
 
-import RSL.Core.RequestStore ( BlockedFetches(..), RequestStore(..) )
+import RSL.Core.Fetcher
+  ( BlockedFetch(..)
+  , Fetcher(..)
+  , class Request
+  )
+
+import RSL.Core.RequestStore ( RequestStore(..) )
 import RSL.Core.RequestStore as RequestStore
+
+import RSL.Core.ResultVar ( ResultVar(..), ResultVal(..), newEmptyResult, readResult )
+
 
 --------------------------------------------
 -- | Monad Environment
@@ -265,13 +264,14 @@ cached env req = do
                 return (Cached (Right a))
 
 -- Creates an RSL monad reflecting a data request
-dataFetch :: forall r a. (DataSource r, Request r a) => r a -> RSL a
+dataFetch :: forall r a. (Request r a) => r a -> RSL a
 dataFetch req = RSL \env ref -> do
   res <- cached env req
   case res of
        -- Uncached, add request to store and return blocked value
        Uncached rvar -> do
-         liftEff $ modifyRef ref $ RequestStore.add (BlockedFetch req rvar)
+         liftEff $ modifyRef ref $ RequestStore.add
+           (BlockedFetch { req: req, rvar: rvar })
          return $ Blocked (Cont (continueFetch req rvar))
        -- Cached but not fetched, return blocked value
        CachedNotFetched rvar ->
@@ -283,14 +283,15 @@ dataFetch req = RSL \env ref -> do
 
 -- Bypasses the caching method to queue a request
 -- This is mostly used for writes, so you don't cache a repeated query
-uncachedRequest :: forall r a. (DataSource r, Request r a) => r a -> RSL a
+uncachedRequest :: forall r a. (Request r a) => r a -> RSL a
 uncachedRequest req = RSL \env ref -> do
   rvar <- liftEff $ newEmptyResult
-  liftEff $ modifyRef ref $ RequestStore.add (BlockedFetch req rvar)
+  liftEff $ modifyRef ref $ RequestStore.add
+    (BlockedFetch { req: req, rvar: rvar })
   return $ Blocked (Cont (continueFetch req rvar))
 
 -- Creates a continuation reflecting a blocked value to be retrieved in current fetch
-continueFetch :: forall a r. (DataSource r, Request r a)
+continueFetch :: forall a r. (Request r a)
               => r a
               -> ResultVar a
               -> RSL a
@@ -308,15 +309,10 @@ performFetches :: forall eff.
                -> Aff ( ref :: REF, console :: CONSOLE | eff ) Int
 performFetches n env reqs = do
   let f = env.flags
-      jobs = RequestStore.contents reqs
-      n' = n + length jobs
+      fetches = RequestStore.apply f reqs
+      n' = n + length fetches
   log "Will collect stats here later"
   log "START fetches"
-  let applyFetch' :: forall r. (DataSource r) => List (forall a. BlockedFetch r a) -> PerformFetch
-      applyFetch' bfs = fetch f bfs
-      applyFetch :: BlockedFetches -> PerformFetch
-      applyFetch (BlockedFetches bfs) = applyFetch' bfs
-      fetches = map applyFetch jobs
   log "DONE fetches"
   return n'
 

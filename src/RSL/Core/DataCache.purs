@@ -20,11 +20,8 @@ import Data.Exists
 import Unsafe.Coerce ( unsafeCoerce )
 import Unsafe.Coerce ( unsafeCoerce )
 
-import RSL.Core.Types
-  ( class DataSource
-  , class Request
-  , ResultVar(..)
-  )
+import RSL.Core.Fetcher ( class Request )
+import RSL.Core.ResultVar ( ResultVar(..) )
 
 import RSL.Utils
   ( hash
